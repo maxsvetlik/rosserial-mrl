@@ -274,8 +274,15 @@ class BidirectionalNode:
 		self.requestTopics()
                 self.lastsync = rospy.Time.now()
             flag = [0,0]
-            flag[0]  = self.port.read(1)
-            if (flag[0] != '\xff'):                
+	    try:
+                flag[0]  = self.port.read(1)
+	    except SerialException:
+		rospy.loginfo("Serial exception during serial read. Exiting...")
+		threading.Timer(self.timeout,self.heartbeat).cancel()
+		self.port.close()
+		break
+
+	    if (flag[0] != '\xff'):                
                 continue
             flag[1] = self.port.read(1)
             if ( flag[1] != self.protocol_ver):
