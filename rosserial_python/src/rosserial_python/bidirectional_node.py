@@ -270,7 +270,8 @@ class BidirectionalNode:
                 self.synced = False
                 self.lastsync_lost = rospy.Time.now()
                 self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, "no sync with device")
-                self.requestTopics()
+                self.negotiateTopics()
+		self.requestTopics()
                 self.lastsync = rospy.Time.now()
             flag = [0,0]
             flag[0]  = self.port.read(1)
@@ -371,25 +372,9 @@ class BidirectionalNode:
         self.subscribers[msg.topic_name] = sub
         self.setSubscribeSize(msg.buffer_size)
         rospy.loginfo("Setup subscriber on %s [%s]" % (msg.topic_name, msg.message_type) )
-	"""
-	msg2 = TopicInfo()
-	msg2.topic_id = TopicInfo.ID_PUBLISHER
-	msg2.topic_name = "/morbo/cmd_vel"
-	msg2.message_type = "geometry_msgs/Twist"
-	msg2.buffer_size = self.buffer_in
-	self.message = load_message("geometry_msgs", "Twist")
-        msg2.md5sum = self.message._md5sum
-
-
-	pub = Publisher(msg2)
-	self.publishers[msg2.topic_id] = pub
-        self.callbacks[msg2.topic_id] = pub.handlePacket
-        self.setPublishSize(msg2.buffer_size)
-        rospy.loginfo("Setup publisher on %s [%s]" % (msg2.topic_name, msg2.message_type) )
-	"""
+    
     def setupPublisher(self, data):
         ''' Request to negotiate topics'''
-	#manual add test:
 	
 	if len(data)==0:
             rospy.loginfo("Got request for topics!")
