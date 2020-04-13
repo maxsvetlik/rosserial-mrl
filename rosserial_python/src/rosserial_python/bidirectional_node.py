@@ -46,7 +46,7 @@ def load_message(package, message):
 
 class Publisher:
     """
-        Publisher forwards messages from the serial device to ROS.
+        Publisher forwards messages from the remote device to local ROS.
     """
     def __init__(self, topic_info):
         """ Create a new publisher. """
@@ -70,7 +70,7 @@ class Publisher:
 
 class Subscriber:
     """
-        Subscriber forwards messages from ROS to the serial device.
+        Subscriber forwards messages from local ROS to the remote device.
     """
 
     def __init__(self, topic_info, parent):
@@ -240,6 +240,7 @@ class BidirectionalNode:
 
         rospy.sleep(2.0) # TODO
 	self.setupTopicsManual()
+	self.negotiateTopics()
         self.requestTopics()
         self.lastsync = rospy.Time.now()
 
