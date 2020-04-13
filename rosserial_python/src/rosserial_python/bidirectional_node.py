@@ -2,6 +2,7 @@
 import roslib;
 import rospy
 
+import binascii
 import thread
 import threading
 from serial import *
@@ -56,7 +57,7 @@ class Publisher:
         package, message = topic_info.message_type.split('/')
         self.message = load_message(package, message)
         if self.message._md5sum == topic_info.md5sum:
-            self.publisher = rospy.Publisher(self.topic, self.message)
+            self.publisher = rospy.Publisher(self.topic, self.message, queue_size=1)
         else:
             raise Exception('Checksum does not match: ' + self.message._md5sum + ',' + topic_info.md5sum)
 
@@ -182,7 +183,6 @@ class BidirectionalNode:
     def __init__(self, port=None, baud=57600, timeout=5.0, compressed=False):
         """ Initialize node, connect to bus, attempt to negotiate topics. """
         self.mutex = thread.allocate_lock()
-
         self.lastsync = rospy.Time(0)
         self.lastsync_lost = rospy.Time(0)
         self.timeout = timeout
@@ -190,7 +190,7 @@ class BidirectionalNode:
 
         self.compressed = compressed
 
-        self.pub_diagnostics = rospy.Publisher('/diagnostics', diagnostic_msgs.msg.DiagnosticArray)
+        self.pub_diagnostics = rospy.Publisher('/diagnostics', diagnostic_msgs.msg.DiagnosticArray, queue_size=1)
 
         if port== None:
             # no port specified, listen for any new port?
@@ -221,8 +221,8 @@ class BidirectionalNode:
         self.subscribers = dict() # topic:Subscriber
         self.services = dict()    # topic:Service
 
-        self.buffer_out = -1
-        self.buffer_in = -1
+        self.buffer_out = 1024
+        self.buffer_in = 1024
 
         self.callbacks = dict()
         # endpoints for creating new pubs/subs
@@ -239,6 +239,7 @@ class BidirectionalNode:
         self.callbacks[TopicInfo.ID_TIME] = self.handleTimeRequest
 
         rospy.sleep(2.0) # TODO
+	self.setupTopicsManual()
         self.requestTopics()
         self.lastsync = rospy.Time.now()
 
@@ -270,7 +271,6 @@ class BidirectionalNode:
                 self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, "no sync with device")
                 self.requestTopics()
                 self.lastsync = rospy.Time.now()
-
             flag = [0,0]
             flag[0]  = self.port.read(1)
             if (flag[0] != '\xff'):                
@@ -295,6 +295,8 @@ class BidirectionalNode:
 
             msg_length, = struct.unpack("<h", msg_len_bytes)
 
+	    #rospy.loginfo("Msg length: + " + str(msg_length))
+
             # checksum of msg_len
             msg_len_chk = self.port.read(1)
             msg_len_checksum = sum(map(ord, msg_len_bytes)) + ord(msg_len_chk)
@@ -311,7 +313,12 @@ class BidirectionalNode:
                 continue
             topic_id, = struct.unpack("<h", topic_id_header)
 
+	    #rospy.loginfo("Topic id: " + str(topic_id))
+
             msg = self.port.read(msg_length)
+
+	    #rospy.loginfo("MSG")
+	    #rospy.loginfo(binascii.hexlify(bytearray(msg)))
 
             if (len(msg) != msg_length):
                 self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, "Packet Failed :  Failed to read msg data")
@@ -329,7 +336,8 @@ class BidirectionalNode:
                 try:
                     if self.compressed and msg_length>0:
                         msg = zlib.decompress(msg)
-                    self.callbacks[topic_id](msg)
+                    #rospy.loginfo("Got topic_ID: " + str(topic_id))
+		    self.callbacks[topic_id](msg)
                 except KeyError:
                     rospy.logerr("Tried to publish before configured, topic id %d" % topic_id)
                     self.requestTopics()
@@ -348,9 +356,41 @@ class BidirectionalNode:
             self.buffer_in = bytes
             rospy.loginfo("Note: subscribe buffer size is %d bytes" % self.buffer_in)
 
+    def setupTopicsManual(self):
+	msg = TopicInfo()
+	
+	msg.topic_id = TopicInfo.ID_SUBSCRIBER
+	msg.topic_name = "/turtle1/cmd_vel"
+	msg.message_type = "geometry_msgs/Twist"
+	msg.buffer_size = self.buffer_in
+	self.message = load_message("geometry_msgs", "Twist")
+        msg.md5sum = self.message._md5sum
+	
+	sub = Subscriber(msg, self)
+        self.subscribers[msg.topic_name] = sub
+        self.setSubscribeSize(msg.buffer_size)
+        rospy.loginfo("Setup subscriber on %s [%s]" % (msg.topic_name, msg.message_type) )
+	"""
+	msg2 = TopicInfo()
+	msg2.topic_id = TopicInfo.ID_PUBLISHER
+	msg2.topic_name = "/morbo/cmd_vel"
+	msg2.message_type = "geometry_msgs/Twist"
+	msg2.buffer_size = self.buffer_in
+	self.message = load_message("geometry_msgs", "Twist")
+        msg2.md5sum = self.message._md5sum
+
+
+	pub = Publisher(msg2)
+	self.publishers[msg2.topic_id] = pub
+        self.callbacks[msg2.topic_id] = pub.handlePacket
+        self.setPublishSize(msg2.buffer_size)
+        rospy.loginfo("Setup publisher on %s [%s]" % (msg2.topic_name, msg2.message_type) )
+	"""
     def setupPublisher(self, data):
         ''' Request to negotiate topics'''
-        if len(data)==0:
+	#manual add test:
+	
+	if len(data)==0:
             rospy.loginfo("Got request for topics!")
             self.requestSyncTime()
             self.negotiateTopics()
@@ -374,6 +414,7 @@ class BidirectionalNode:
     def setupSubscriber(self, data):
         """ Register a new subscriber. """
         try:
+	    rospy.loginfo("Setting up a Subscriber!")
             msg = TopicInfo()
             msg.deserialize(data)
             if msg.topic_name in self.subscribers.keys():
@@ -581,12 +622,13 @@ class BidirectionalNode:
         self.send(TopicInfo.ID_TIME, data_buffer.getvalue())
 
     def negotiateTopics(self):
-        #self.port.flushInput()
+        self.port.flushInput()
         # publishers on this side require subscribers on the other, and viceversa
         ti = TopicInfo()
+	rospy.loginfo(self.publishers.keys())
         for p_id in self.publishers.keys():
             p = self.publishers[p_id]
-            ti.topic_id = p_id
+	    ti.topic_id = p_id
             ti.topic_name = p.topic
             ti.message_type = p.message_type
             ti.md5sum = p.message._md5sum
@@ -596,6 +638,7 @@ class BidirectionalNode:
             self.send(TopicInfo.ID_SUBSCRIBER,_buffer.getvalue())
             time.sleep(0.1)
 
+	rospy.loginfo(self.subscribers.keys())
         for s_name in self.subscribers.keys():
             s = self.subscribers[s_name]
             ti.topic_id = s.id
