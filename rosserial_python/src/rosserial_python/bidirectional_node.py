@@ -180,7 +180,7 @@ class BidirectionalNode:
         ServiceServer responds to requests from the serial device.
     """
 
-    def __init__(self, port=None, baud=57600, timeout=5.0, compressed=False):
+    def __init__(self, port=None, baud=256000, timeout=5.0, compressed=False):
         """ Initialize node, connect to bus, attempt to negotiate topics. """
         self.mutex = thread.allocate_lock()
         self.lastsync = rospy.Time(0)
@@ -221,8 +221,8 @@ class BidirectionalNode:
         self.subscribers = dict() # topic:Subscriber
         self.services = dict()    # topic:Service
 
-        self.buffer_out = 1024
-        self.buffer_in = 1024
+        self.buffer_out = -1
+        self.buffer_in = -1
 
         self.callbacks = dict()
         # endpoints for creating new pubs/subs
@@ -239,7 +239,8 @@ class BidirectionalNode:
         self.callbacks[TopicInfo.ID_TIME] = self.handleTimeRequest
 
         rospy.sleep(2.0) # TODO
-	self.setupTopicsManual()
+	#self.setupTopicsManual()
+	self.subscribeAllPublished()
 	self.negotiateTopics()
         self.requestTopics()
         self.lastsync = rospy.Time.now()
@@ -276,6 +277,7 @@ class BidirectionalNode:
             flag = [0,0]
 	    try:
                 flag[0]  = self.port.read(1)
+                flag[1] = self.port.read(1)
 	    except SerialException:
 		rospy.loginfo("Serial exception during serial read. Exiting...")
 		threading.Timer(self.timeout,self.heartbeat).cancel()
@@ -284,7 +286,6 @@ class BidirectionalNode:
 
 	    if (flag[0] != '\xff'):                
                 continue
-            flag[1] = self.port.read(1)
             if ( flag[1] != self.protocol_ver):
                 # clear the  serial port buffer
                 #self.port.flushInput()
@@ -364,6 +365,29 @@ class BidirectionalNode:
         if self.buffer_in < 0:
             self.buffer_in = bytes
             rospy.loginfo("Note: subscribe buffer size is %d bytes" % self.buffer_in)
+
+    def subscribeAllPublished(self):
+	msg = TopicInfo()
+	msg.topic_id = TopicInfo.ID_SUBSCRIBER
+	msg.buffer_size = self.buffer_in
+	blacklist_topics = ['/rosout', '/rosout_agg']	
+        for tup in rospy.get_published_topics():
+	    topic_name = tup[0]
+	    topic_type = tup[1]
+	    
+	    if topic_name not in blacklist_topics:
+	       msg.topic_name = topic_name
+	       msg.message_type = topic_type
+	       pkg, msg_name = topic_type.split('/')
+	       self.message = load_message(pkg, msg_name)
+               msg.md5sum = self.message._md5sum
+	
+	       sub = Subscriber(msg, self)
+               self.subscribers[msg.topic_name] = sub
+               self.setSubscribeSize(msg.buffer_size)
+               rospy.loginfo("Setup subscriber on %s [%s]" % (msg.topic_name, msg.message_type) )
+    
+
 
     def setupTopicsManual(self):
 	msg = TopicInfo()
@@ -616,6 +640,7 @@ class BidirectionalNode:
 
     def negotiateTopics(self):
         self.port.flushInput()
+	outgoing_prefix = '/' + socket.gethostname() 
         # publishers on this side require subscribers on the other, and viceversa
         ti = TopicInfo()
 	rospy.loginfo(self.publishers.keys())
