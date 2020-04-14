@@ -20,6 +20,9 @@ import struct
 
 import zlib
 
+__author__ = "juancamilog@gmail.com (Juan Camilo Gamboa Higuera)"
+__author__ = "maxsvetlik@utexas.edu (Max Svetlik)"
+
 def load_pkg_module(package, directory):
     #check if its in the python path
     in_path = False
@@ -209,7 +212,7 @@ class BidirectionalNode:
 
         #self.port.timeout = 0.01  # Edit the port timeout
 
-        time.sleep(0.1)           # Wait for ready (patch for Uno)
+        #time.sleep(0.1)           # Wait for ready (patch for Uno)
 
         # hydro introduces protocol ver2 which must match node_handle.h
         # The protocol version is sent as the 2nd sync byte emitted by each end
@@ -240,8 +243,7 @@ class BidirectionalNode:
 
 	self.sub_ids=15
 
-        rospy.sleep(2.0) # TODO
-	#self.setupTopicsManual()
+        #rospy.sleep(2.0) # TODO
 	self.subscribeAllPublished()
 	self.negotiateTopics()
         self.requestTopics()
@@ -307,8 +309,6 @@ class BidirectionalNode:
 
             msg_length, = struct.unpack("<h", msg_len_bytes)
 
-	    #rospy.loginfo("Msg length: + " + str(msg_length))
-
             # checksum of msg_len
             msg_len_chk = self.port.read(1)
             msg_len_checksum = sum(map(ord, msg_len_bytes)) + ord(msg_len_chk)
@@ -325,18 +325,12 @@ class BidirectionalNode:
                 continue
             topic_id, = struct.unpack("<h", topic_id_header)
 
-	    #rospy.loginfo("Topic id: " + str(topic_id))
-
             msg = self.port.read(msg_length)
-
-	    #rospy.loginfo("MSG")
-	    #rospy.loginfo(binascii.hexlify(bytearray(msg)))
 
             if (len(msg) != msg_length):
                 self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, "Packet Failed :  Failed to read msg data")
                 rospy.loginfo("Packet Failed :  Failed to read msg data")
                 rospy.loginfo("msg len is %d",len(msg))
-                #self.port.flushInput()
                 continue
 
             # checksum for topic id and msg
@@ -350,7 +344,7 @@ class BidirectionalNode:
                         msg = zlib.decompress(msg)
 		    self.callbacks[topic_id](msg)
                 except KeyError:
-                    rospy.logerr("Tried to publish before configured, topic id %d" % topic_id)
+                    rospy.logwarn("Tried to publish before configured, topic id %d" % topic_id)
                     self.requestTopics()
                 except:
                     rospy.logerr("Unexpected error: %s",sys.exc_info()[0])
@@ -388,23 +382,6 @@ class BidirectionalNode:
                self.subscribers[msg.topic_name] = sub
                self.setSubscribeSize(msg.buffer_size)
                rospy.loginfo("Setup subscriber on %s [%s]" % (msg.topic_name, msg.message_type) )
-    
-
-
-    def setupTopicsManual(self):
-	msg = TopicInfo()
-	
-	msg.topic_id = TopicInfo.ID_SUBSCRIBER
-	msg.topic_name = "/turtle1/cmd_vel"
-	msg.message_type = "geometry_msgs/Twist"
-	msg.buffer_size = self.buffer_in
-	self.message = load_message("geometry_msgs", "Twist")
-        msg.md5sum = self.message._md5sum
-	
-	sub = Subscriber(msg, self)
-        self.subscribers[msg.topic_name] = sub
-        self.setSubscribeSize(msg.buffer_size)
-        rospy.loginfo("Setup subscriber on %s [%s]" % (msg.topic_name, msg.message_type) )
     
     def setupPublisher(self, data):
         ''' Request to negotiate topics'''
@@ -644,22 +621,24 @@ class BidirectionalNode:
         self.port.flushInput()
 	outgoing_prefix = '/' + socket.gethostname() 
         # publishers on this side require subscribers on the other, and viceversa
-        ti = TopicInfo()
-	rospy.loginfo(self.publishers.keys())
-        for p_id in self.publishers.keys():
+        
+	ti = TopicInfo()
+        """
+	# This is meant to sync subscribers if publishers are set up locally.
+	# This functionality should be implemented in the future, however it does not currently work as intended
+	# Current practice is to set up subscribers locally which syncs Pubs on the remote
+	for p_id in self.publishers.keys():
             p = self.publishers[p_id]
-	    ti.topic_id = self.sub_ids #self.publishers.keys().index(p_id)
-	    self.sub_ids+=1
+	    ti.topic_id = p_id
             ti.topic_name = p.topic
             ti.message_type = p.message_type
             ti.md5sum = p.message._md5sum
             ti.buffer_size = self.buffer_out
             _buffer = StringIO.StringIO()
-            #ti.serialize(_buffer)
-            #self.send(TopicInfo.ID_SUBSCRIBER,_buffer.getvalue())
-            time.sleep(0.1)
-
-	rospy.loginfo(self.subscribers.keys())
+            ti.serialize(_buffer)
+            self.send(TopicInfo.ID_SUBSCRIBER,_buffer.getvalue())
+            time.sleep(0.01)
+	"""
         for s_name in self.subscribers.keys():
             s = self.subscribers[s_name]
             ti.topic_id = s.id
@@ -670,7 +649,7 @@ class BidirectionalNode:
             _buffer = StringIO.StringIO()
             ti.serialize(_buffer)
             self.send(TopicInfo.ID_PUBLISHER,_buffer.getvalue())
-            time.sleep(0.1)
+            time.sleep(0.01)
 
         # service clients on this side require service servers on the other, and viceversa
         for s_name in self.services.keys():
@@ -690,7 +669,7 @@ class BidirectionalNode:
             if s.__class__.__name__ == 'ServiceServer':
                 self.send(TopicInfo.ID_SERVICE_CLIENT+TopicInfo.ID_PUBLISHER,_buffer.getvalue())
                 self.send(TopicInfo.ID_SERVICE_CLIENT+TopicInfo.ID_SUBSCRIBER,_buffer.getvalue())
-            time.sleep(0.1)
+            time.sleep(0.01)
 
         pass
 
