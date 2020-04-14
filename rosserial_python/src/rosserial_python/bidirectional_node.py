@@ -7,7 +7,7 @@ import thread
 import threading
 from serial import *
 import StringIO
-
+from collections import OrderedDict 
 from std_msgs.msg import Time
 from rosserial_msgs.msg import *
 from rosserial_msgs.srv import *
@@ -217,12 +217,12 @@ class BidirectionalNode:
         self.protocol_ver2 = '\xfe'
         self.protocol_ver = self.protocol_ver2
 
-        self.publishers = dict()  # id:Publishers
+        self.publishers = OrderedDict()  # id:Publishers
         self.subscribers = dict() # topic:Subscriber
         self.services = dict()    # topic:Service
 
-        self.buffer_out = -1
-        self.buffer_in = -1
+        self.buffer_out = 1024
+        self.buffer_in = 1024
 
         self.callbacks = dict()
         # endpoints for creating new pubs/subs
@@ -237,6 +237,8 @@ class BidirectionalNode:
         self.callbacks[TopicInfo.ID_PARAMETER_REQUEST] = self.handleParameterRequest
         self.callbacks[TopicInfo.ID_LOG] = self.handleLoggingRequest
         self.callbacks[TopicInfo.ID_TIME] = self.handleTimeRequest
+
+	self.sub_ids=15
 
         rospy.sleep(2.0) # TODO
 	#self.setupTopicsManual()
@@ -346,7 +348,6 @@ class BidirectionalNode:
                 try:
                     if self.compressed and msg_length>0:
                         msg = zlib.decompress(msg)
-                    #rospy.loginfo("Got topic_ID: " + str(topic_id))
 		    self.callbacks[topic_id](msg)
                 except KeyError:
                     rospy.logerr("Tried to publish before configured, topic id %d" % topic_id)
@@ -368,7 +369,6 @@ class BidirectionalNode:
 
     def subscribeAllPublished(self):
 	msg = TopicInfo()
-	msg.topic_id = TopicInfo.ID_SUBSCRIBER
 	msg.buffer_size = self.buffer_in
 	blacklist_topics = ['/rosout', '/rosout_agg']	
         for tup in rospy.get_published_topics():
@@ -376,6 +376,8 @@ class BidirectionalNode:
 	    topic_type = tup[1]
 	    
 	    if topic_name not in blacklist_topics:
+	       msg.topic_id = self.sub_ids
+	       self.sub_ids+=1   
 	       msg.topic_name = topic_name
 	       msg.message_type = topic_type
 	       pkg, msg_name = topic_type.split('/')
@@ -421,7 +423,7 @@ class BidirectionalNode:
                 rospy.loginfo("Publisher exists on %s [%s]" % (msg.topic_name, msg.message_type) )
                 return
             pub = Publisher(msg)
-            self.publishers[msg.topic_id] = pub
+            self.publishers[msg.topic_name] = pub
             self.callbacks[msg.topic_id] = pub.handlePacket
             self.setPublishSize(msg.buffer_size)
             rospy.loginfo("Setup publisher on %s [%s]" % (msg.topic_name, msg.message_type) )
@@ -646,21 +648,22 @@ class BidirectionalNode:
 	rospy.loginfo(self.publishers.keys())
         for p_id in self.publishers.keys():
             p = self.publishers[p_id]
-	    ti.topic_id = p_id
+	    ti.topic_id = self.sub_ids #self.publishers.keys().index(p_id)
+	    self.sub_ids+=1
             ti.topic_name = p.topic
             ti.message_type = p.message_type
             ti.md5sum = p.message._md5sum
             ti.buffer_size = self.buffer_out
             _buffer = StringIO.StringIO()
-            ti.serialize(_buffer)
-            self.send(TopicInfo.ID_SUBSCRIBER,_buffer.getvalue())
+            #ti.serialize(_buffer)
+            #self.send(TopicInfo.ID_SUBSCRIBER,_buffer.getvalue())
             time.sleep(0.1)
 
 	rospy.loginfo(self.subscribers.keys())
         for s_name in self.subscribers.keys():
             s = self.subscribers[s_name]
             ti.topic_id = s.id
-            ti.topic_name = s.topic
+            ti.topic_name = outgoing_prefix+s.topic
             ti.message_type = s.message_type
             ti.md5sum = s.message._md5sum
             ti.buffer_size = self.buffer_in
